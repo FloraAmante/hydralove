@@ -1,75 +1,75 @@
 "use client";
 
-import { useEffect } from "react";
-import { useHydrationData, getTodayDateString } from "@/hooks/useHydrationData";
-import { UserSettings, DailyHydration } from "@/types";
+import { useEffect, useRef } from "react";
+import { useHydrationData } from "@/hooks/useHydrationData";
+import { CLOUD_ENDPOINTS } from "@/lib/supabase";
 
-interface SyncPayload {
-  settings?: UserSettings;
-  todayRecord?: DailyHydration;
-  timestamp?: number;
-}
-
-export function CloudSyncManager({
-  apiKey = "hydralove_secret_key_123",
-}: {
-  apiKey?: string;
-}) {
+export function CloudSyncManager() {
   const { settings, todayRecord, saveSettings } = useHydrationData();
+  const lastKnownMsgRef = useRef<string>(settings.customBoyfriendMessage || "");
 
-  // 1. Send her live hydration stats to free cloud JSON bin every time she drinks water
+  // 1. Sync Malar's live hydration stats to cloud DB whenever she drinks water
   useEffect(() => {
-    if (!todayRecord || todayRecord.entries.length === 0) return;
+    if (!todayRecord) return;
 
-    const syncStatsToCloud = async () => {
+    const syncLiveStatsToCloud = async () => {
       try {
-        const payload: SyncPayload = {
-          settings,
-          todayRecord,
-          timestamp: Date.now(),
+        const payload = {
+          name: settings.name,
+          boyfriendName: settings.boyfriendName,
+          dailyGoal: settings.dailyGoal,
+          todayTotal: todayRecord.entries.reduce((a, b) => a + b.amount, 0),
+          todayPercentage: Math.min(100, Math.round((todayRecord.entries.reduce((a, b) => a + b.amount, 0) / (todayRecord.goal || settings.dailyGoal)) * 100)),
+          entriesCount: todayRecord.entries.length,
+          lastSipTimestamp: todayRecord.entries[0] ? todayRecord.entries[0].timestamp : null,
+          updatedAt: new Date().toISOString(),
         };
 
-        // Uses free JSONbin.io endpoint or public edge kv
-        await fetch("https://api.jsonbin.io/v3/b", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Bin-Private": "false",
-            "X-Bin-Name": "hydralove_live_stats",
-          },
+        await fetch(CLOUD_ENDPOINTS.STATS_DB, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
       } catch (e) {
-        // Silent catch for offline resiliency
+        // Resilient fallback
       }
     };
 
-    const timer = setTimeout(syncStatsToCloud, 2000);
+    const timer = setTimeout(syncLiveStatsToCloud, 1000);
     return () => clearTimeout(timer);
   }, [todayRecord, settings]);
 
-  // 2. Poll for remote messages sent by Hirthik from US across continents
+  // 2. Poll Cloud DB every 3 seconds for messages sent by Hirthik from the US
   useEffect(() => {
-    const pollRemoteMessages = async () => {
+    const fetchCloudMessage = async () => {
       try {
-        const res = await fetch(
-          `https://api.npoint.io/hydralove_admin_channel?t=${Date.now()}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.message && data.message !== settings.customBoyfriendMessage) {
+        const response = await fetch(`${CLOUD_ENDPOINTS.MESSAGE_RELAY}?t=${Date.now()}`);
+        if (response.ok) {
+          const text = await response.text();
+          let cloudMsg = "";
+          try {
+            const parsed = JSON.parse(text);
+            cloudMsg = parsed.message || parsed;
+          } catch {
+            cloudMsg = text;
+          }
+
+          if (cloudMsg && cloudMsg !== lastKnownMsgRef.current && cloudMsg.trim().length > 0) {
+            lastKnownMsgRef.current = cloudMsg;
             saveSettings({
               ...settings,
-              customBoyfriendMessage: data.message,
+              customBoyfriendMessage: cloudMsg,
             });
           }
         }
       } catch (e) {
-        // Silent catch
+        // Resilient polling
       }
     };
 
-    const interval = setInterval(pollRemoteMessages, 10000); // Check every 10s
+    // Immediate check + fast 3s polling loop
+    fetchCloudMessage();
+    const interval = setInterval(fetchCloudMessage, 3000);
     return () => clearInterval(interval);
   }, [settings, saveSettings]);
 
