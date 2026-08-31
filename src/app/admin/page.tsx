@@ -135,7 +135,7 @@ export default function AdminPage() {
       <div className="bg-white/70 dark:bg-slate-800/70 backdrop-blur-md rounded-3xl p-5 border border-sky-100 dark:border-slate-700/60 shadow-xs space-y-4">
         <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
           <Send className="w-4 h-4 text-sky-500" />
-          <span>Send Remote Notification (US -> India)</span>
+          <span>Send Remote Notification (US to India)</span>
         </h2>
 
         <form onSubmit={handleSaveMessage} className="space-y-3">
