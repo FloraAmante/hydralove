@@ -2,7 +2,8 @@
 
 import { useHydrationData } from "@/hooks/useHydrationData";
 import { BOYFRIEND_PERSONAL_MESSAGES } from "@/lib/constants";
-import { ShieldCheck, Heart, Send, Sparkles, Activity, CheckCircle2, RefreshCw, Radio, Cloud } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { ShieldCheck, Heart, Send, Sparkles, Activity, CheckCircle2, RefreshCw, Radio, Database } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 
@@ -22,29 +23,30 @@ export default function AdminPage() {
   const [isSendingCloud, setIsSendingCloud] = useState(false);
   const [liveStats, setLiveStats] = useState<LiveStatsData | null>(null);
 
-  // Poll live stats from public Cloud KV DB (Malar's live data in India)
+  // Poll live stats from user's Supabase Postgres DB
   useEffect(() => {
-    const fetchLiveCloudStats = async () => {
+    const fetchLiveSupabaseStats = async () => {
       try {
-        const res = await fetch(`https://kvdb.io/4y9h9w79v5z9x9/hydralove_live_stats?t=${Date.now()}`);
-        if (res.ok) {
-          const text = await res.text();
-          const data = JSON.parse(text);
-          if (data && typeof data.today_total === "number") {
-            setLiveStats(data);
-          }
+        const { data, error } = await supabase
+          .from("hydration_stats")
+          .select("*")
+          .eq("id", "current_stats")
+          .single();
+
+        if (!error && data) {
+          setLiveStats(data);
         }
       } catch (e) {
         // Fallback to local
       }
     };
 
-    fetchLiveCloudStats();
-    const interval = setInterval(fetchLiveCloudStats, 2000);
+    fetchLiveSupabaseStats();
+    const interval = setInterval(fetchLiveSupabaseStats, 2500);
     return () => clearInterval(interval);
   }, []);
 
-  const dispatchToCloudDB = async (messageText: string) => {
+  const dispatchToSupabasePostgres = async (messageText: string) => {
     setIsSendingCloud(true);
 
     // Save locally
@@ -54,20 +56,19 @@ export default function AdminPage() {
     });
 
     try {
-      // Direct POST to public KV storage
-      await fetch("https://kvdb.io/4y9h9w79v5z9x9/hydralove_custom_message", {
-        method: "POST",
-        body: JSON.stringify({
+      // Insert message directly into Supabase PostgreSQL table via SDK
+      await supabase.from("admin_messages").insert([
+        {
           message: messageText,
           sent_by: settings.boyfriendName,
-          timestamp: new Date().toISOString(),
-        }),
-      });
+          created_at: new Date().toISOString(),
+        },
+      ]);
 
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 3500);
     } catch (err) {
-      console.error("Cloud KV Push error:", err);
+      console.error("Supabase Postgres push error:", err);
     } finally {
       setIsSendingCloud(false);
     }
@@ -76,12 +77,12 @@ export default function AdminPage() {
   const handleSaveMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!customMsg.trim()) return;
-    dispatchToCloudDB(customMsg);
+    dispatchToSupabasePostgres(customMsg);
   };
 
   const handleQuickPreset = (presetText: string) => {
     setCustomMsg(presetText);
-    dispatchToCloudDB(presetText);
+    dispatchToSupabasePostgres(presetText);
   };
 
   const activeStats = liveStats || {
@@ -98,14 +99,14 @@ export default function AdminPage() {
       {/* Header */}
       <div className="text-center sm:text-left border-b border-sky-100 dark:border-slate-800 pb-4">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-pink-100 dark:bg-pink-950 text-pink-600 dark:text-pink-400 font-bold text-xs mb-2">
-          <Cloud className="w-4 h-4 text-sky-500" />
-          <span>Cloud Sync Console 👑</span>
+          <Database className="w-4 h-4 text-emerald-500" />
+          <span>Supabase Postgres Cloud Console 🐘</span>
         </div>
         <h1 className="text-2xl font-extrabold text-slate-800 dark:text-slate-100">
           Remote Control for {settings.name} ❤️
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Connected via Zero-Auth Cloud KV Relay. Send notes from US to India & monitor her sips in real time!
+          Connected to Supabase (<code className="font-mono text-emerald-600">ybumgwhcbuovrjugdkas</code>). Send notes from US to India & monitor her sips in real time!
         </p>
       </div>
 
@@ -118,7 +119,7 @@ export default function AdminPage() {
           </h3>
           <span className="text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 px-2.5 py-1 rounded-full flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-            Live Connected (2s)
+            Supabase Live
           </span>
         </div>
 
@@ -164,7 +165,7 @@ export default function AdminPage() {
             Live Message Active
           </span>
           <span className="text-[10px] bg-pink-200/50 dark:bg-pink-900/50 px-2 py-0.5 rounded-full">
-            Synced
+            Supabase Connected
           </span>
         </div>
 
@@ -181,7 +182,7 @@ export default function AdminPage() {
       <div className="bg-white/70 dark:bg-slate-800/70 backdrop-blur-md rounded-3xl p-5 border border-sky-100 dark:border-slate-700/60 shadow-xs space-y-4">
         <h2 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
           <Send className="w-4 h-4 text-sky-500" />
-          <span>Dispatch Cloud Pop-up Notification (US to India)</span>
+          <span>Dispatch Supabase Pop-up Notification (US to India)</span>
         </h2>
 
         <form onSubmit={handleSaveMessage} className="space-y-3">
@@ -197,7 +198,7 @@ export default function AdminPage() {
             {savedSuccess ? (
               <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-xs text-emerald-600 font-bold flex items-center gap-1">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Pushed to Cloud & Pop-Up Triggered! ❤️</span>
+                <span>Pushed to Supabase & Pop-Up Sent! ❤️</span>
               </motion.span>
             ) : (
               <span className="text-[11px] text-slate-400">Triggers pop-up on her device in India</span>
@@ -209,7 +210,7 @@ export default function AdminPage() {
               className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-xs shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
             >
               {isSendingCloud ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              <span>Send Remote Pop-Up 💌</span>
+              <span>Send Supabase Pop-Up 💌</span>
             </button>
           </div>
         </form>

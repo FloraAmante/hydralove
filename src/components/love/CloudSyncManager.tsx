@@ -2,22 +2,24 @@
 
 import { useEffect, useRef } from "react";
 import { useHydrationData } from "@/hooks/useHydrationData";
+import { supabase } from "@/lib/supabase";
 
 export function CloudSyncManager() {
   const { settings, todayRecord, saveSettings } = useHydrationData();
   const lastKnownMsgRef = useRef<string>(settings.customBoyfriendMessage || "");
 
-  // 1. Sync Malar's live hydration stats to public KV relay
+  // 1. Sync Malar's live hydration stats to Supabase PostgreSQL database
   useEffect(() => {
     if (!todayRecord) return;
 
-    const syncLiveStatsToCloud = async () => {
+    const syncLiveStatsToSupabase = async () => {
       try {
         const total = todayRecord.entries.reduce((a, b) => a + b.amount, 0);
         const goal = todayRecord.goal || settings.dailyGoal;
         const pct = Math.min(100, Math.round((total / goal) * 100));
 
         const payload = {
+          id: "current_stats",
           girlfriend_name: settings.name,
           boyfriend_name: settings.boyfriendName,
           daily_goal: goal,
@@ -28,37 +30,28 @@ export function CloudSyncManager() {
           updated_at: new Date().toISOString(),
         };
 
-        await fetch("https://api.counterapi.dev/v1/hydralove/stats/up", { method: "GET" }).catch(() => {});
-
-        // Save live JSON state to key-value cloud store (completely free, zero-auth public relay)
-        await fetch("https://kvdb.io/4y9h9w79v5z9x9/hydralove_live_stats", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+        await supabase.from("hydration_stats").upsert(payload, { onConflict: "id" });
       } catch (e) {
-        // Silent fallback
+        // Fallback to local storage
       }
     };
 
-    const timer = setTimeout(syncLiveStatsToCloud, 1500);
+    const timer = setTimeout(syncLiveStatsToSupabase, 1500);
     return () => clearTimeout(timer);
   }, [todayRecord, settings]);
 
-  // 2. Poll public KV database every 2 seconds for messages sent by Hirthik from the US
+  // 2. Poll Supabase PostgreSQL database every 2.5s for messages sent by Hirthik from the US
   useEffect(() => {
-    const fetchCloudMessage = async () => {
+    const fetchSupabaseMessage = async () => {
       try {
-        const response = await fetch(`https://kvdb.io/4y9h9w79v5z9x9/hydralove_custom_message?t=${Date.now()}`);
-        if (response.ok) {
-          const text = await response.text();
-          let cloudMsg = text;
-          try {
-            const parsed = JSON.parse(text);
-            cloudMsg = parsed.message || parsed;
-          } catch {
-            cloudMsg = text;
-          }
+        const { data, error } = await supabase
+          .from("admin_messages")
+          .select("message")
+          .order("created_at", { ascending: false })
+          .limit(1);
 
+        if (!error && Array.isArray(data) && data[0] && data[0].message) {
+          const cloudMsg = data[0].message;
           if (cloudMsg && cloudMsg !== lastKnownMsgRef.current && cloudMsg.trim().length > 0) {
             lastKnownMsgRef.current = cloudMsg;
             saveSettings({
@@ -68,12 +61,12 @@ export function CloudSyncManager() {
           }
         }
       } catch (e) {
-        // Silent fallback
+        // Silent catch
       }
     };
 
-    fetchCloudMessage();
-    const interval = setInterval(fetchCloudMessage, 2000);
+    fetchSupabaseMessage();
+    const interval = setInterval(fetchSupabaseMessage, 2500);
     return () => clearInterval(interval);
   }, [settings, saveSettings]);
 
